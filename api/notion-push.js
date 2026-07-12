@@ -264,8 +264,9 @@ function parseInlineRichText(text) {
   if (!text) return [{ type: "text", text: { content: "" } }];
 
   const segments = [];
-  // 토큰화: **bold**, *italic*, `code`, $math$ 를 순서대로 찾음
-  const tokenRegex = /(\*\*.+?\*\*|\*.+?\*|`.+?`|\$.+?\$)/g;
+  // 토큰화: $$...$$(굳이 처리 안 해도 되지만 방어), **bold**, `code`, $math$, *italic* 순서로 시도
+  // 볼드(**)를 이탤릭(*)보다 반드시 먼저 검사해야 ** 안의 별표가 * 하나로 잘못 매치되지 않음
+  const tokenRegex = /(\*\*[^*]+?\*\*|`[^`]+?`|\$[^$]+?\$|\*[^*]+?\*)/g;
   let lastIndex = 0;
   let match;
 
