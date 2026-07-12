@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 const TODOIST_TOKEN_URL = "https://todoist.com/oauth/access_token";
 
 export default async function handler(req, res) {
@@ -16,8 +18,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const savedState = parseCookie(req.headers.cookie || "").studyloop_oauth_state;
-  if (!code || !state || !savedState || state !== savedState) {
+  if (!code || !state || !verifySignedState(state, clientSecret)) {
     redirectWithError(res, appUrl, "state_mismatch");
     return;
   }
@@ -44,7 +45,6 @@ export default async function handler(req, res) {
 
     const payload = await response.json();
     const token = encodeURIComponent(payload.access_token);
-    res.setHeader("Set-Cookie", "studyloop_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0");
     res.writeHead(302, { Location: `${appUrl}/#todoist_token=${token}` });
     res.end();
   } catch (err) {
@@ -53,21 +53,22 @@ export default async function handler(req, res) {
   }
 }
 
-function parseCookie(cookieHeader) {
-  return Object.fromEntries(
-    cookieHeader
-      .split(";")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .map((part) => {
-        const index = part.indexOf("=");
-        return [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
-      }),
-  );
+function verifySignedState(state, secret) {
+  const [encodedPayload, signature] = String(state).split(".");
+  if (!encodedPayload || !signature) return false;
+
+  const expected = crypto.createHmac("sha256", secret).update(encodedPayload).digest("base64url");
+  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return false;
+
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+    return typeof payload.exp === "number" && Date.now() < payload.exp;
+  } catch {
+    return false;
+  }
 }
 
 function redirectWithError(res, appUrl, error) {
-  res.setHeader("Set-Cookie", "studyloop_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0");
   res.writeHead(302, { Location: `${appUrl}/#todoist_error=${encodeURIComponent(error)}` });
   res.end();
 }
