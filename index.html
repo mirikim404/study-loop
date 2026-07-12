@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StudyLoop</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace" aria-label="StudyLoop workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">StudyLoop Agent</p>
+            <h1>Todoist 할 일을 Claude 학습노트 루프로</h1>
+          </div>
+          <div class="status-pill" id="connectionStatus">로그인 필요</div>
+        </header>
+
+        <section class="panel connect-panel" aria-label="Todoist connection">
+          <div class="panel-heading">
+            <div>
+              <h2>Todoist 연결</h2>
+              <p>Todoist 로그인으로 오늘 할 일을 불러오고, 복습 할 일을 다시 추가합니다.</p>
+            </div>
+            <button class="icon-button" id="clearTokenButton" title="연결 해제" aria-label="연결 해제">
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+
+          <div class="oauth-row">
+            <button id="loginButton">Todoist로 로그인</button>
+            <button class="secondary" id="loadTodayButton">오늘 할 일 불러오기</button>
+            <button class="secondary" id="logoutButton">로그아웃</button>
+          </div>
+          <p class="auth-note">
+            OAuth PKCE 방식으로 연결합니다. 토큰은 이 브라우저에만 저장되며 서버에 따로 보관하지 않습니다.
+          </p>
+
+          <details class="manual-token">
+            <summary>API 토큰 직접 입력</summary>
+            <div class="token-row">
+              <input id="tokenInput" type="password" autocomplete="off" placeholder="Todoist API 토큰 입력" />
+              <button id="saveTokenButton">직접 연결</button>
+            </div>
+          </details>
+        </section>
+
+        <section class="grid">
+          <section class="panel task-panel" aria-label="Today study queue">
+            <div class="panel-heading">
+              <div>
+                <h2>오늘의 학습 큐</h2>
+                <p>Todoist 또는 직접 입력한 할 일에서 학습 작업을 고릅니다.</p>
+              </div>
+              <button class="secondary compact" id="analyzeManualButton">직접 입력 분석</button>
+            </div>
+            <textarea id="manualTasks" class="manual-input" placeholder="예시&#10;미분적분학: 5차시 정리&#10;OUTTA 부트캠프: 기본 1차시 정리"></textarea>
+            <div class="task-list" id="taskList"></div>
+          </section>
+
+          <section class="panel detail-panel" aria-label="Selected task details">
+            <div class="panel-heading">
+              <div>
+                <h2>학습 설정</h2>
+                <p>선택한 작업에 맞춰 프롬프트가 자동으로 바뀝니다.</p>
+              </div>
+            </div>
+            <div class="form-grid">
+              <label>
+                과목
+                <input id="subjectInput" type="text" placeholder="미분적분학" />
+              </label>
+              <label>
+                범위
+                <input id="scopeInput" type="text" placeholder="5차시" />
+              </label>
+              <label>
+                작업 유형
+                <select id="taskTypeInput">
+                  <option value="정리">정리</option>
+                  <option value="복습">복습</option>
+                  <option value="문제풀이">문제풀이</option>
+                  <option value="과제">과제</option>
+                  <option value="시험 대비">시험 대비</option>
+                </select>
+              </label>
+              <label>
+                자료 유형
+                <select id="materialTypeInput">
+                  <option value="PDF">PDF</option>
+                  <option value="강의자료">강의자료</option>
+                  <option value="교재">교재</option>
+                  <option value="실습자료">실습자료</option>
+                  <option value="필기">필기</option>
+                </select>
+              </label>
+              <label>
+                목표
+                <select id="goalInput">
+                  <option value="시험 대비">시험 대비</option>
+                  <option value="개념 이해">개념 이해</option>
+                  <option value="실습 정리">실습 정리</option>
+                  <option value="암기 노트">암기 노트</option>
+                  <option value="과제 준비">과제 준비</option>
+                </select>
+              </label>
+              <label>
+                난이도
+                <select id="levelInput">
+                  <option value="대학생">대학생</option>
+                  <option value="초급 학습자">초급 학습자</option>
+                  <option value="전공 입문자">전공 입문자</option>
+                  <option value="시험 직전 학습자">시험 직전 학습자</option>
+                </select>
+              </label>
+            </div>
+          </section>
+        </section>
+
+        <section class="grid output-grid">
+          <section class="panel output-panel" aria-label="Claude prompt">
+            <div class="panel-heading">
+              <div>
+                <h2>Claude 프롬프트</h2>
+                <p>6가지 프롬프트 원칙을 반영해 생성됩니다.</p>
+              </div>
+              <button class="secondary compact" data-copy-target="promptOutput">복사</button>
+            </div>
+            <textarea id="promptOutput" class="output-box" spellcheck="false"></textarea>
+          </section>
+
+          <section class="panel output-panel" aria-label="Notion markdown">
+            <div class="panel-heading">
+              <div>
+                <h2>Notion용 Markdown</h2>
+                <p>Claude 결과를 붙여넣으면 템플릿에 옮기기 좋게 정리합니다.</p>
+              </div>
+              <button class="secondary compact" data-copy-target="markdownOutput">복사</button>
+            </div>
+            <textarea id="claudeResult" class="paste-box" placeholder="Claude가 만든 학습노트를 여기에 붙여넣기"></textarea>
+            <textarea id="markdownOutput" class="output-box markdown-box" spellcheck="false"></textarea>
+          </section>
+        </section>
+
+        <section class="panel review-panel" aria-label="Review loop">
+          <div class="panel-heading">
+            <div>
+              <h2>복습 루프</h2>
+              <p>학습노트 생성 후 Todoist에 복습 할 일을 다시 넣습니다.</p>
+            </div>
+            <button id="createReviewButton">복습 할 일 추가</button>
+          </div>
+          <div class="review-list" id="reviewList"></div>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
