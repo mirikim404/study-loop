@@ -1,3 +1,4 @@
+console.log("DEBUG raw markdown received:", JSON.stringify(markdown.slice(0, 500)));
 const NOTION_API_BASE = "https://api.notion.com/v1";
 const NOTION_VERSION = "2022-06-28";
 
