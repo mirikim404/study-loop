@@ -50,7 +50,7 @@ export default async function handler(req, res) {
             title: [{ text: { content: title } }],
           },
           "과목": {
-            rich_text: [{ text: { content: subject } }],
+            select: { name: subject },
           },
           "날짜": {
             date: { start: today },
