@@ -36,16 +36,11 @@ const els = {
   toast: document.getElementById("toast"),
 };
 
-const sampleTasks = [
-  parseTask("미분적분학: 5차시 정리", "예시"),
-  parseTask("OUTTA 부트캠프: 기본 1차시 정리", "예시"),
-].filter(Boolean);
-
 async function init() {
   els.tokenInput.value = localStorage.getItem(STORAGE.manualToken) || "";
   bindEvents();
-  setTasks(sampleTasks);
-  selectTask(sampleTasks[0]);
+  setTasks([]);
+  clearSelectedTask();
   handleTokenRedirect();
   updateConnectionStatus();
 }
@@ -280,6 +275,10 @@ function detectDomain(subject, detail) {
 
 function setTasks(tasks) {
   state.tasks = tasks;
+  if (!tasks.length) {
+    state.selectedTask = null;
+    clearSelectedTask();
+  }
   renderTaskList();
 }
 
@@ -321,6 +320,18 @@ function selectTask(task) {
   els.levelInput.value = task.level;
   renderTaskList();
   renderOutputs();
+}
+
+function clearSelectedTask() {
+  els.subjectInput.value = "";
+  els.scopeInput.value = "";
+  els.taskTypeInput.value = "정리";
+  els.materialTypeInput.value = "PDF";
+  els.goalInput.value = "시험 대비";
+  els.levelInput.value = "대학생";
+  els.promptOutput.value = "Todoist에서 오늘 할 일을 불러오거나 직접 입력을 분석하면 Claude 프롬프트가 생성됩니다.";
+  els.markdownOutput.value = "Claude 결과를 붙여넣으면 Notion용 Markdown이 생성됩니다.";
+  renderReviewList(getConfig());
 }
 
 function getConfig() {
