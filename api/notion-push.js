@@ -1,4 +1,4 @@
-console.log("DEBUG raw markdown received:", JSON.stringify(markdown.slice(0, 500)));
+
 const NOTION_API_BASE = "https://api.notion.com/v1";
 const NOTION_VERSION = "2022-06-28";
 
@@ -25,6 +25,9 @@ export default async function handler(req, res) {
 
   const title = `${subject} - ${scope || ""}`.trim();
   const today = new Date().toISOString().slice(0, 10);
+
+  console.log("DEBUG markdown length:", markdown.length);
+  console.log("DEBUG raw markdown (first 300):", markdown.slice(0, 300));
 
   try {
     const blocks = markdownToBlocks(markdown);
