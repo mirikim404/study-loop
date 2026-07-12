@@ -157,6 +157,11 @@ p {
   margin-bottom: 14px;
 }
 
+
+.panel-heading > div:first-child {
+  min-width: 0; 
+}
+
 .icon-button {
   width: 36px;
   min-height: 36px;
@@ -311,6 +316,8 @@ textarea:focus {
 .button-row {
   display: flex;
   gap: 8px;
+  flex-shrink: 0;  
+  flex-wrap: nowrap; 
 }
 
 .tag {
