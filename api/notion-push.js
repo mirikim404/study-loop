@@ -26,6 +26,12 @@ export default async function handler(req, res) {
   const today = new Date().toISOString().slice(0, 10);
 
   try {
+    const blocks = markdownToBlocks(markdown);
+
+    // Notion pages.create는 children을 최대 100개까지만 한 번에 받음
+    const firstBatch = blocks.slice(0, 100);
+    const remaining = blocks.slice(100);
+
     const createRes = await fetch(`${NOTION_API_BASE}/pages`, {
       method: "POST",
       headers: {
@@ -40,7 +46,7 @@ export default async function handler(req, res) {
             title: [{ text: { content: title } }],
           },
           "과목": {
-            select: { name: subject },
+            rich_text: [{ text: { content: subject } }],
           },
           "날짜": {
             date: { start: today },
@@ -49,7 +55,7 @@ export default async function handler(req, res) {
             select: { name: type || "정리" },
           },
         },
-        children: markdownToBlocks(markdown),
+        children: firstBatch,
       }),
     });
 
@@ -61,6 +67,27 @@ export default async function handler(req, res) {
     }
 
     const data = await createRes.json();
+
+    // 100개 넘는 블록은 append로 이어붙이기 (100개씩 나눠서)
+    for (let i = 0; i < remaining.length; i += 100) {
+      const chunk = remaining.slice(i, i + 100);
+      const appendRes = await fetch(`${NOTION_API_BASE}/blocks/${data.id}/children`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Notion-Version": NOTION_VERSION,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ children: chunk }),
+      });
+      if (!appendRes.ok) {
+        const errText = await appendRes.text();
+        console.error("Notion append error", appendRes.status, errText);
+        // 페이지 자체는 이미 생성됐으므로 에러여도 계속 진행
+        break;
+      }
+    }
+
     res.status(200).json({ success: true, pageUrl: data.url });
   } catch (err) {
     console.error(err);
@@ -68,16 +95,28 @@ export default async function handler(req, res) {
   }
 }
 
-// 간단한 Markdown → Notion 블록 변환 (제목, 리스트, 코드블록, 일반 텍스트 처리)
+// ---------- Markdown -> Notion blocks ----------
+
 function markdownToBlocks(markdown) {
   const lines = markdown.split(/\r?\n/);
   const blocks = [];
   let inCodeBlock = false;
   let codeLines = [];
   let codeLanguage = "plain text";
+  let tableBuffer = [];
 
-  for (const line of lines) {
+  const flushTable = () => {
+    if (tableBuffer.length === 0) return;
+    blocks.push(buildTableBlock(tableBuffer));
+    tableBuffer = [];
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // 코드블록 처리
     if (line.trim().startsWith("```")) {
+      flushTable();
       if (!inCodeBlock) {
         inCodeBlock = true;
         codeLanguage = line.trim().slice(3).trim() || "plain text";
@@ -101,7 +140,31 @@ function markdownToBlocks(markdown) {
       continue;
     }
 
+    // 표 라인 감지: | 로 시작하고 끝나는 라인
+    const isTableRow = /^\s*\|.*\|\s*$/.test(line);
+    const isTableSeparator = /^\s*\|?[\s:|-]+\|?\s*$/.test(line) && line.includes("-");
+
+    if (isTableRow) {
+      if (!isTableSeparator) {
+        tableBuffer.push(parseTableRow(line));
+      }
+      continue;
+    } else if (tableBuffer.length > 0) {
+      flushTable();
+    }
+
     if (!line.trim()) continue;
+
+    // 독립된 $$...$$ 블록 수식 (한 줄 전체가 수식인 경우)
+    const blockMathMatch = line.trim().match(/^\$\$(.+)\$\$$/);
+    if (blockMathMatch) {
+      blocks.push({
+        object: "block",
+        type: "equation",
+        equation: { expression: blockMathMatch[1].trim() },
+      });
+      continue;
+    }
 
     if (line.startsWith("### ")) {
       blocks.push(headingBlock(3, line.slice(4)));
@@ -109,14 +172,14 @@ function markdownToBlocks(markdown) {
       blocks.push(headingBlock(2, line.slice(3)));
     } else if (line.startsWith("# ")) {
       blocks.push(headingBlock(1, line.slice(2)));
-    } else if (/^[-*]\s+\[[ x]\]\s+/.test(line)) {
+    } else if (/^[-*]\s+\[[ x]\]\s+/i.test(line)) {
       const checked = /\[x\]/i.test(line);
       const text = line.replace(/^[-*]\s+\[[ x]\]\s+/i, "");
       blocks.push({
         object: "block",
         type: "to_do",
         to_do: {
-          rich_text: [{ type: "text", text: { content: text.slice(0, 2000) } }],
+          rich_text: parseInlineRichText(text),
           checked,
         },
       });
@@ -125,7 +188,15 @@ function markdownToBlocks(markdown) {
         object: "block",
         type: "bulleted_list_item",
         bulleted_list_item: {
-          rich_text: [{ type: "text", text: { content: line.replace(/^[-*]\s+/, "").slice(0, 2000) } }],
+          rich_text: parseInlineRichText(line.replace(/^[-*]\s+/, "")),
+        },
+      });
+    } else if (/^\d+\.\s+/.test(line)) {
+      blocks.push({
+        object: "block",
+        type: "numbered_list_item",
+        numbered_list_item: {
+          rich_text: parseInlineRichText(line.replace(/^\d+\.\s+/, "")),
         },
       });
     } else if (line.trim() === "---") {
@@ -135,13 +206,15 @@ function markdownToBlocks(markdown) {
         object: "block",
         type: "paragraph",
         paragraph: {
-          rich_text: [{ type: "text", text: { content: line.slice(0, 2000) } }],
+          rich_text: parseInlineRichText(line),
         },
       });
     }
   }
 
-  return blocks.slice(0, 100); // Notion API 한 번 호출 시 최대 100블록 제한
+  flushTable();
+
+  return blocks;
 }
 
 function headingBlock(level, text) {
@@ -150,13 +223,114 @@ function headingBlock(level, text) {
     object: "block",
     type,
     [type]: {
-      rich_text: [{ type: "text", text: { content: text.slice(0, 2000) } }],
+      rich_text: parseInlineRichText(text),
     },
   };
 }
 
+// 표 한 행을 셀 배열로 파싱: "| a | b | c |" -> ["a", "b", "c"]
+function parseTableRow(line) {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").map((cell) => cell.trim());
+}
+
+function buildTableBlock(rows) {
+  const columnCount = Math.max(...rows.map((r) => r.length));
+  const tableRows = rows.map((row) => ({
+    object: "block",
+    type: "table_row",
+    table_row: {
+      cells: Array.from({ length: columnCount }, (_, i) =>
+        parseInlineRichText(row[i] || ""),
+      ),
+    },
+  }));
+
+  return {
+    object: "block",
+    type: "table",
+    table: {
+      table_width: columnCount,
+      has_column_header: true,
+      has_row_header: false,
+      children: tableRows,
+    },
+  };
+}
+
+// 인라인 텍스트를 Notion rich_text 배열로 변환
+// 처리: **볼드**, *이탤릭*, `코드`, $인라인수식$
+function parseInlineRichText(text) {
+  if (!text) return [{ type: "text", text: { content: "" } }];
+
+  const segments = [];
+  // 토큰화: **bold**, *italic*, `code`, $math$ 를 순서대로 찾음
+  const tokenRegex = /(\*\*.+?\*\*|\*.+?\*|`.+?`|\$.+?\$)/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = tokenRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      pushPlainText(segments, text.slice(lastIndex, match.index));
+    }
+
+    const token = match[0];
+
+    if (token.startsWith("**")) {
+      pushAnnotatedText(segments, token.slice(2, -2), { bold: true });
+    } else if (token.startsWith("`")) {
+      pushAnnotatedText(segments, token.slice(1, -1), { code: true });
+    } else if (token.startsWith("$")) {
+      segments.push({
+        type: "equation",
+        equation: { expression: token.slice(1, -1) },
+      });
+    } else if (token.startsWith("*")) {
+      pushAnnotatedText(segments, token.slice(1, -1), { italic: true });
+    }
+
+    lastIndex = tokenRegex.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    pushPlainText(segments, text.slice(lastIndex));
+  }
+
+  if (segments.length === 0) {
+    segments.push({ type: "text", text: { content: "" } });
+  }
+
+  // Notion rich_text 배열은 최대 100개, 각 content는 2000자 제한
+  return segments.slice(0, 100).map((seg) => {
+    if (seg.type === "equation") {
+      return {
+        type: "equation",
+        equation: { expression: seg.equation.expression.slice(0, 1000) },
+      };
+    }
+    return {
+      type: "text",
+      text: { content: seg.text.content.slice(0, 2000) },
+      annotations: seg.annotations,
+    };
+  });
+}
+
+function pushPlainText(segments, text) {
+  if (!text) return;
+  segments.push({ type: "text", text: { content: text } });
+}
+
+function pushAnnotatedText(segments, text, annotations) {
+  if (!text) return;
+  segments.push({ type: "text", text: { content: text }, annotations });
+}
+
 function mapLanguage(lang) {
-  const known = ["javascript", "python", "java", "c", "c++", "sql", "bash", "json", "html", "css", "plain text"];
+  const known = [
+    "javascript", "python", "java", "c", "c++", "sql", "bash",
+    "json", "html", "css", "plain text", "typescript", "shell",
+  ];
   const normalized = lang.toLowerCase();
   return known.includes(normalized) ? normalized : "plain text";
 }
