@@ -33,6 +33,7 @@ const els = {
   markdownOutput: document.getElementById("markdownOutput"),
   reviewList: document.getElementById("reviewList"),
   createReviewButton: document.getElementById("createReviewButton"),
+  pushToNotionButton: document.getElementById("pushToNotionButton"),
   toast: document.getElementById("toast"),
 };
 
@@ -54,6 +55,7 @@ function bindEvents() {
   els.analyzeManualButton.addEventListener("click", analyzeManualTasks);
   els.claudeResult.addEventListener("input", renderOutputs);
   els.createReviewButton.addEventListener("click", createReviewTasks);
+  els.pushToNotionButton.addEventListener("click", pushToNotion);
 
   [
     els.subjectInput,
@@ -519,6 +521,46 @@ async function createReviewTasks() {
   } finally {
     els.createReviewButton.disabled = false;
     els.createReviewButton.textContent = "복습 할 일 추가";
+  }
+}
+
+async function pushToNotion() {
+  const config = getConfig();
+  const markdown = els.markdownOutput.value.trim();
+
+  if (!markdown || markdown.startsWith("Claude 결과를")) {
+    showToast("먼저 Claude 결과를 붙여넣어 Markdown을 생성해주세요.");
+    return;
+  }
+
+  els.pushToNotionButton.disabled = true;
+  els.pushToNotionButton.textContent = "저장 중";
+
+  try {
+    const response = await fetch("/api/notion-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subject: config.subject,
+        scope: config.scope,
+        type: config.type,
+        markdown,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "Notion 저장 실패");
+    }
+
+    showToast("Notion에 저장했어요.");
+  } catch (error) {
+    console.error(error);
+    showToast("Notion 저장에 실패했어요.");
+  } finally {
+    els.pushToNotionButton.disabled = false;
+    els.pushToNotionButton.textContent = "Notion에 저장";
   }
 }
 
