@@ -308,6 +308,11 @@ textarea:focus {
   margin-top: 8px;
 }
 
+.button-row {
+  display: flex;
+  gap: 8px;
+}
+
 .tag {
   border-radius: 999px;
   padding: 4px 8px;
