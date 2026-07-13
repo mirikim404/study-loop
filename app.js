@@ -376,14 +376,10 @@ function buildClaudePrompt(config) {
 2. ${config.goal}에 중요한 개념을 우선순위로 골라줘.
 3. 각 개념을 정의, 의미, 사용 조건, 예시로 나눠 설명해줘.
 4. 헷갈리기 쉬운 부분과 자주 틀리는 포인트를 따로 정리해줘.
-5. 마지막에 복습 체크리스트와 예상 질문을 만들어줘.
+5. 마지막에 에빙하우스 망각 곡선에 기반한 '1/3/7일 차 복습용 Active Recall 질문' 3가지를 난이도별로 만들어줘.
 
 예시:
 ${example}
-
-출력 형식:
-# ${config.subject} - ${config.scope}
-${sections.map((section) => `## ${section}`).join("\n")}
 
 출력 형식:
 # ${config.subject} - ${config.scope}
@@ -446,14 +442,10 @@ ${body}
 
 ---
 
-## 복습 체크
-- [ ] 핵심 개념을 말로 설명하기
-- [ ] 헷갈리는 포인트 3개 표시하기
-- [ ] 관련 문제 또는 실습 1개 다시 풀기
-
-## 다음 할 일
-- [ ] ${config.subject} ${config.scope} 1차 복습
-- [ ] ${config.subject} ${config.scope} 문제/실습 재확인`;
+## 🔄 에빙하우스 복습 트래커
+- [ ] **1일 차 복습 (내일):** 노트 빠르게 훑어보기
+- [ ] **3일 차 복습:** Active Recall 질문에 답해보기 (어려웠다면 Todoist 일정 연기)
+- [ ] **7일 차 복습:** 백지에 핵심 개념이나 코드 흐름 그려보기`;
 }
 
 function renderReviewList(config) {
@@ -473,19 +465,19 @@ function renderReviewList(config) {
 function getReviewTasks(config) {
   return [
     {
-      content: `${config.subject} ${config.scope} 1차 복습`,
+      content: `[1일 차 복습] ${config.subject} ${config.scope}`,
       due_string: "tomorrow",
-      description: "학습노트 핵심 요약과 체크리스트 확인",
+      description: "학습노트 내용 빠르게 훑어보기",
     },
     {
-      content: `${config.subject} ${config.scope} 문제/실습 재확인`,
+      content: `[3일 차 복습] ${config.subject} ${config.scope}`,
       due_string: "in 3 days",
-      description: "예상 문제 또는 실습 흐름 다시 풀기",
+      description: "노트 하단의 Active Recall 질문에 답해보기",
     },
     {
-      content: `${config.subject} ${config.scope} 최종 점검`,
-      due_string: "next week",
-      description: "헷갈리는 포인트만 빠르게 재점검",
+      content: `[7일 차 복습] ${config.subject} ${config.scope}`,
+      due_string: "in 7 days", // next week 대신 정확히 7일 뒤로 설정
+      description: "백지에 핵심 개념 안 보고 그려보기",
     },
   ];
 }
