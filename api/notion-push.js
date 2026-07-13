@@ -1,4 +1,3 @@
-
 const NOTION_API_BASE = "https://api.notion.com/v1";
 const NOTION_VERSION = "2022-06-28";
 
@@ -104,9 +103,15 @@ export default async function handler(req, res) {
 function markdownToBlocks(markdown) {
   const lines = markdown.split(/\r?\n/);
   const blocks = [];
+  
   let inCodeBlock = false;
   let codeLines = [];
   let codeLanguage = "plain text";
+
+  // 수식 블록 상태 추적
+  let inMathBlock = false;
+  let mathLines = [];
+  
   let tableBuffer = [];
 
   const flushTable = () => {
@@ -118,7 +123,7 @@ function markdownToBlocks(markdown) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // 코드블록 처리
+    // 1. 코드블록 처리
     if (line.trim().startsWith("```")) {
       flushTable();
       if (!inCodeBlock) {
@@ -159,7 +164,29 @@ function markdownToBlocks(markdown) {
       continue;
     }
 
-    // 표 라인 감지
+    // 2. 여러 줄 수식 블록($$) 처리
+    if (line.trim() === "$$") {
+      flushTable();
+      if (!inMathBlock) {
+        inMathBlock = true;
+        mathLines = [];
+      } else {
+        inMathBlock = false;
+        blocks.push({
+          object: "block",
+          type: "equation",
+          equation: { expression: mathLines.join("\n").trim() || " " },
+        });
+      }
+      continue;
+    }
+
+    if (inMathBlock) {
+      mathLines.push(line);
+      continue;
+    }
+
+    // 3. 표 라인 감지
     const isTableRow = /^\s*\|.*\|\s*$/.test(line);
     const isTableSeparator = /^\s*\|?[\s:|-]+\|?\s*$/.test(line) && line.includes("-");
 
@@ -174,9 +201,10 @@ function markdownToBlocks(markdown) {
 
     if (!line.trim()) continue;
 
-    // 독립된 $$...$$ 블록 수식
+    // 4. 독립된 $$...$$ 블록 수식 (한 줄짜리)
     const blockMathMatch = line.trim().match(/^\$\$(.+)\$\$$/);
     if (blockMathMatch) {
+      flushTable();
       blocks.push({
         object: "block",
         type: "equation",
@@ -185,6 +213,7 @@ function markdownToBlocks(markdown) {
       continue;
     }
 
+    // 5. 헤딩, 리스트, 토글 등 기타 요소 처리
     if (line.startsWith("### ")) {
       blocks.push(headingBlock(3, line.slice(4)));
     } else if (line.startsWith("## ")) {
@@ -220,6 +249,18 @@ function markdownToBlocks(markdown) {
       });
     } else if (line.trim() === "---") {
       blocks.push({ object: "block", type: "divider", divider: {} });
+      
+    // 6. 노션 토글 블록 감지 (>)
+    } else if (line.trim().startsWith(">")) {
+      const text = line.trim().replace(/^>\s*/, "");
+      blocks.push({
+        object: "block",
+        type: "toggle",
+        toggle: {
+          rich_text: parseInlineRichText(text),
+        },
+      });
+
     } else {
       blocks.push({
         object: "block",
@@ -232,6 +273,16 @@ function markdownToBlocks(markdown) {
   }
 
   flushTable();
+  
+  // 마크다운이 끝났는데 수식 블록이 안 닫힌 경우 처리
+  if (inMathBlock) {
+    blocks.push({
+      object: "block",
+      type: "equation",
+      equation: { expression: mathLines.join("\n").trim() || " " },
+    });
+  }
+
   return blocks;
 }
 
@@ -278,7 +329,8 @@ function parseInlineRichText(text) {
   if (!text) return [{ type: "text", text: { content: "" } }];
 
   const segments = [];
-  const tokenRegex = /(\*\*[^*]+?\*\*|`[^`]+?`|\$[^$]+?\$|\*[^*]+?\*)/g;
+  // 정규식 수정: 인라인 $$...$$ 및 $...$ 모두 잡아냅니다.
+  const tokenRegex = /(\*\*[^*]+?\*\*|`[^`]+?`|\$\$.+?\$\$|\$[^$]+?\$|\*[^*]+?\*)/g;
   let lastIndex = 0;
   let match;
 
@@ -303,10 +355,17 @@ function parseInlineRichText(text) {
       }
     } else if (token.startsWith("`")) {
       pushAnnotatedText(segments, token.slice(1, -1), { code: true });
-    } else if (token.startsWith("$")) {
+    } else if (token.startsWith("$$") && token.endsWith("$$")) {
+      // 인라인 $$ 수식 처리
       segments.push({
         type: "equation",
-        equation: { expression: token.slice(1, -1) || " " },
+        equation: { expression: token.slice(2, -2).trim() || " " },
+      });
+    } else if (token.startsWith("$")) {
+      // 인라인 $ 수식 처리
+      segments.push({
+        type: "equation",
+        equation: { expression: token.slice(1, -1).trim() || " " },
       });
     } else if (token.startsWith("*")) {
       pushAnnotatedText(segments, token.slice(1, -1), { italic: true });
