@@ -25,9 +25,6 @@ export default async function handler(req, res) {
   const title = `${subject} - ${scope || ""}`.trim();
   const today = new Date().toISOString().slice(0, 10);
 
-  console.log("DEBUG markdown length:", markdown.length);
-  console.log("DEBUG raw markdown (first 300):", markdown.slice(0, 300));
-
   try {
     const blocks = markdownToBlocks(markdown);
 
@@ -100,6 +97,12 @@ export default async function handler(req, res) {
 
 // ---------- Markdown -> Notion blocks ----------
 
+// ✨ 추가된 수식 정제 함수: 에러를 유발하는 가운뎃점을 쉼표로 변환
+function sanitizeMath(expr) {
+  if (!expr) return " ";
+  return expr.replace(/·/g, ", ");
+}
+
 function markdownToBlocks(markdown) {
   const lines = markdown.split(/\r?\n/);
   const blocks = [];
@@ -108,7 +111,6 @@ function markdownToBlocks(markdown) {
   let codeLines = [];
   let codeLanguage = "plain text";
 
-  // 수식 블록 상태 추적
   let inMathBlock = false;
   let mathLines = [];
   
@@ -135,7 +137,6 @@ function markdownToBlocks(markdown) {
         const fullCode = codeLines.join("\n");
         const richTextChunks = [];
         
-        // 2000자 단위로 쪼개서 데이터 유실 방지
         for (let j = 0; j < fullCode.length; j += 2000) {
           richTextChunks.push({
             type: "text",
@@ -151,7 +152,7 @@ function markdownToBlocks(markdown) {
           object: "block",
           type: "code",
           code: {
-            rich_text: richTextChunks.slice(0, 100), // 최대 100조각(20만자) 허용
+            rich_text: richTextChunks.slice(0, 100),
             language: mapLanguage(codeLanguage),
           },
         });
@@ -175,7 +176,7 @@ function markdownToBlocks(markdown) {
         blocks.push({
           object: "block",
           type: "equation",
-          equation: { expression: mathLines.join("\n").trim() || " " },
+          equation: { expression: sanitizeMath(mathLines.join("\n").trim()) }, // sanitizeMath 적용
         });
       }
       continue;
@@ -208,7 +209,7 @@ function markdownToBlocks(markdown) {
       blocks.push({
         object: "block",
         type: "equation",
-        equation: { expression: blockMathMatch[1].trim() },
+        equation: { expression: sanitizeMath(blockMathMatch[1].trim()) }, // sanitizeMath 적용
       });
       continue;
     }
@@ -249,8 +250,6 @@ function markdownToBlocks(markdown) {
       });
     } else if (line.trim() === "---") {
       blocks.push({ object: "block", type: "divider", divider: {} });
-      
-    // 6. 노션 토글 블록 감지 (>)
     } else if (line.trim().startsWith(">")) {
       const text = line.trim().replace(/^>\s*/, "");
       blocks.push({
@@ -260,7 +259,6 @@ function markdownToBlocks(markdown) {
           rich_text: parseInlineRichText(text),
         },
       });
-
     } else {
       blocks.push({
         object: "block",
@@ -274,12 +272,11 @@ function markdownToBlocks(markdown) {
 
   flushTable();
   
-  // 마크다운이 끝났는데 수식 블록이 안 닫힌 경우 처리
   if (inMathBlock) {
     blocks.push({
       object: "block",
       type: "equation",
-      equation: { expression: mathLines.join("\n").trim() || " " },
+      equation: { expression: sanitizeMath(mathLines.join("\n").trim()) }, // sanitizeMath 적용
     });
   }
 
@@ -324,12 +321,10 @@ function buildTableBlock(rows) {
   };
 }
 
-// 인라인 텍스트 처리
 function parseInlineRichText(text) {
   if (!text) return [{ type: "text", text: { content: "" } }];
 
   const segments = [];
-  // 정규식 수정: 인라인 $$...$$ 및 $...$ 모두 잡아냅니다.
   const tokenRegex = /(\*\*[^*]+?\*\*|`[^`]+?`|\$\$.+?\$\$|\$[^$]+?\$|\*[^*]+?\*)/g;
   let lastIndex = 0;
   let match;
@@ -343,11 +338,10 @@ function parseInlineRichText(text) {
 
     if (token.startsWith("**")) {
       const innerText = token.slice(2, -2);
-      // 볼드체 안에 수식이 있는 경우 분기 처리 (예: **$O(n)$**)
       if (innerText.startsWith("$") && innerText.endsWith("$") && innerText.length > 2) {
         segments.push({
           type: "equation",
-          equation: { expression: innerText.slice(1, -1) },
+          equation: { expression: sanitizeMath(innerText.slice(1, -1)) }, // sanitizeMath 적용
           annotations: { bold: true }
         });
       } else {
@@ -356,16 +350,14 @@ function parseInlineRichText(text) {
     } else if (token.startsWith("`")) {
       pushAnnotatedText(segments, token.slice(1, -1), { code: true });
     } else if (token.startsWith("$$") && token.endsWith("$$")) {
-      // 인라인 $$ 수식 처리
       segments.push({
         type: "equation",
-        equation: { expression: token.slice(2, -2).trim() || " " },
+        equation: { expression: sanitizeMath(token.slice(2, -2).trim()) }, // sanitizeMath 적용
       });
     } else if (token.startsWith("$")) {
-      // 인라인 $ 수식 처리
       segments.push({
         type: "equation",
-        equation: { expression: token.slice(1, -1).trim() || " " },
+        equation: { expression: sanitizeMath(token.slice(1, -1).trim()) }, // sanitizeMath 적용
       });
     } else if (token.startsWith("*")) {
       pushAnnotatedText(segments, token.slice(1, -1), { italic: true });
@@ -394,7 +386,6 @@ function parseInlineRichText(text) {
   });
 }
 
-// 텍스트 길이가 2000자가 넘으면 여러 개의 객체로 쪼개서 유실 방지
 function pushPlainText(segments, text) {
   if (!text) return;
   for (let i = 0; i < text.length; i += 2000) {
