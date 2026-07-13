@@ -385,7 +385,11 @@ ${example}
 # ${config.subject} - ${config.scope}
 ${sections.map((section) => `## ${section}`).join("\n")}
 
-Markdown으로 출력해줘. Notion에 바로 붙여넣을 수 있게 제목 계층을 유지하고, 수식은 LaTeX 표기, 코드는 코드블록으로 정리해줘.`;
+출력 형식:
+# ${config.subject} - ${config.scope}
+${sections.map((section) => `## ${section}`).join("\n")}
+
+Markdown으로 출력해줘. Notion API로 전송하기 적합한 형태를 유지하고, 인라인 수식은 반드시 앞뒤로 $ 기호를 붙이고 단독 수식 블록은 $$ 기호를 사용해줘. 코드는 언어를 명시한 코드블록으로 정리해줘.`;
 }
 
 function getRole(config) {
