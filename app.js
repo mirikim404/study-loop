@@ -3,12 +3,19 @@ const TODOIST_API_BASE = "https://api.todoist.com/api/v1";
 const STORAGE = {
   accessToken: "studyloop.todoistAccessToken",
   manualToken: "studyloop.todoistManualToken",
+  notionAccessToken: "studyloop.notionAccessToken",
+  notionWorkspace: "studyloop.notionWorkspace",
+  notionDatabaseId: "studyloop.notionDatabaseId",
 };
 
 const state = {
   token: localStorage.getItem(STORAGE.accessToken) || localStorage.getItem(STORAGE.manualToken) || "",
   tasks: [],
   selectedTask: null,
+  notionToken: localStorage.getItem(STORAGE.notionAccessToken) || "",
+  notionWorkspace: localStorage.getItem(STORAGE.notionWorkspace) || "",
+  notionDatabaseId: localStorage.getItem(STORAGE.notionDatabaseId) || "",
+  notionDatabases: [],
 };
 
 const els = {
@@ -34,6 +41,11 @@ const els = {
   reviewList: document.getElementById("reviewList"),
   createReviewButton: document.getElementById("createReviewButton"),
   pushToNotionButton: document.getElementById("pushToNotionButton"),
+  notionConnectionStatus: document.getElementById("notionConnectionStatus"),
+  notionLoginButton: document.getElementById("notionLoginButton"),
+  notionLogoutButton: document.getElementById("notionLogoutButton"),
+  notionDatabaseSelect: document.getElementById("notionDatabaseSelect"),
+  refreshNotionDatabasesButton: document.getElementById("refreshNotionDatabasesButton"),
   toast: document.getElementById("toast"),
 };
 
@@ -44,6 +56,10 @@ async function init() {
   clearSelectedTask();
   handleTokenRedirect();
   updateConnectionStatus();
+  updateNotionConnectionStatus();
+  if (state.notionToken) {
+    await loadNotionDatabases();
+  }
 }
 
 function bindEvents() {
@@ -56,6 +72,10 @@ function bindEvents() {
   els.claudeResult.addEventListener("input", renderOutputs);
   els.createReviewButton.addEventListener("click", createReviewTasks);
   els.pushToNotionButton.addEventListener("click", pushToNotion);
+  els.notionLoginButton.addEventListener("click", startNotionLogin);
+  els.notionLogoutButton.addEventListener("click", clearNotionToken);
+  els.refreshNotionDatabasesButton.addEventListener("click", loadNotionDatabases);
+  els.notionDatabaseSelect.addEventListener("change", saveSelectedNotionDatabase);
 
   [
     els.subjectInput,
@@ -77,23 +97,39 @@ async function startTodoistLogin() {
 
 function handleTokenRedirect() {
   const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  const token = params.get("todoist_token");
-  const error = params.get("todoist_error");
+  const todoistToken = params.get("todoist_token");
+  const todoistError = params.get("todoist_error");
+  const notionToken = params.get("notion_token");
+  const notionWorkspace = params.get("notion_workspace");
+  const notionError = params.get("notion_error");
 
-  if (error) {
-    showToast(`Todoist 로그인 실패: ${error}`);
-    cleanUrl();
-    return;
+  let handled = false;
+
+  if (todoistError) {
+    showToast(`Todoist 로그인 실패: ${todoistError}`);
+    handled = true;
+  } else if (todoistToken) {
+    localStorage.setItem(STORAGE.accessToken, todoistToken);
+    localStorage.removeItem(STORAGE.manualToken);
+    state.token = todoistToken;
+    els.tokenInput.value = "";
+    showToast("Todoist 로그인이 완료됐어요.");
+    handled = true;
   }
 
-  if (!token) return;
+  if (notionError) {
+    showToast(`Notion 로그인 실패: ${notionError}`);
+    handled = true;
+  } else if (notionToken) {
+    localStorage.setItem(STORAGE.notionAccessToken, notionToken);
+    if (notionWorkspace) localStorage.setItem(STORAGE.notionWorkspace, notionWorkspace);
+    state.notionToken = notionToken;
+    state.notionWorkspace = notionWorkspace || "";
+    showToast("Notion 로그인이 완료됐어요.");
+    handled = true;
+  }
 
-  localStorage.setItem(STORAGE.accessToken, token);
-  localStorage.removeItem(STORAGE.manualToken);
-  state.token = token;
-  els.tokenInput.value = "";
-  cleanUrl();
-  showToast("Todoist 로그인이 완료됐어요.");
+  if (handled) cleanUrl();
 }
 
 async function todoistFetch(path, options = {}, retry = true) {
@@ -520,10 +556,118 @@ async function createReviewTasks() {
   }
 }
 
+async function startNotionLogin() {
+  window.location.assign("/api/notion-auth-start");
+}
+
+function updateNotionConnectionStatus() {
+  if (state.notionToken) {
+    els.notionConnectionStatus.textContent = state.notionWorkspace
+      ? `Notion 연결됨 (${state.notionWorkspace})`
+      : "Notion 연결됨";
+    els.notionConnectionStatus.classList.add("connected");
+    els.notionLoginButton.disabled = true;
+    els.notionLogoutButton.disabled = false;
+    els.notionDatabaseSelect.disabled = false;
+    els.refreshNotionDatabasesButton.disabled = false;
+  } else {
+    els.notionConnectionStatus.textContent = "Notion 로그인 필요";
+    els.notionConnectionStatus.classList.remove("connected");
+    els.notionLoginButton.disabled = false;
+    els.notionLogoutButton.disabled = true;
+    els.notionDatabaseSelect.disabled = true;
+    els.refreshNotionDatabasesButton.disabled = true;
+  }
+}
+
+function clearNotionToken() {
+  state.notionToken = "";
+  state.notionWorkspace = "";
+  state.notionDatabaseId = "";
+  state.notionDatabases = [];
+  localStorage.removeItem(STORAGE.notionAccessToken);
+  localStorage.removeItem(STORAGE.notionWorkspace);
+  localStorage.removeItem(STORAGE.notionDatabaseId);
+  renderNotionDatabaseOptions();
+  updateNotionConnectionStatus();
+  showToast("Notion 연결을 해제했어요.");
+}
+
+async function loadNotionDatabases() {
+  if (!state.notionToken) return;
+
+  els.refreshNotionDatabasesButton.disabled = true;
+  els.refreshNotionDatabasesButton.textContent = "불러오는 중";
+
+  try {
+    const response = await fetch("/api/notion-databases", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${state.notionToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (response.status === 401) {
+      clearNotionToken();
+      showToast("Notion 로그인이 만료됐어요. 다시 로그인해주세요.");
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(`Notion database list failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    state.notionDatabases = data.databases || [];
+    renderNotionDatabaseOptions();
+
+    if (!state.notionDatabases.length) {
+      showToast("연결된 Notion 데이터베이스가 없어요. Notion 로그인 화면에서 페이지 접근을 허용해주세요.");
+    }
+  } catch (error) {
+    console.error(error);
+    showToast("Notion 데이터베이스 목록을 불러오지 못했어요.");
+  } finally {
+    els.refreshNotionDatabasesButton.disabled = !state.notionToken;
+    els.refreshNotionDatabasesButton.textContent = "목록 새로고침";
+  }
+}
+
+function renderNotionDatabaseOptions() {
+  const select = els.notionDatabaseSelect;
+
+  if (!state.notionDatabases.length) {
+    select.innerHTML = '<option value="">저장할 데이터베이스를 먼저 연결해주세요</option>';
+    return;
+  }
+
+  select.innerHTML = state.notionDatabases
+    .map((db) => `<option value="${escapeHtml(db.id)}">${escapeHtml(db.title)}</option>`)
+    .join("");
+
+  const match = state.notionDatabases.find((db) => db.id === state.notionDatabaseId);
+  select.value = match ? state.notionDatabaseId : state.notionDatabases[0].id;
+  state.notionDatabaseId = select.value;
+  localStorage.setItem(STORAGE.notionDatabaseId, state.notionDatabaseId);
+}
+
+function saveSelectedNotionDatabase() {
+  state.notionDatabaseId = els.notionDatabaseSelect.value;
+  localStorage.setItem(STORAGE.notionDatabaseId, state.notionDatabaseId);
+}
+
 async function pushToNotion() {
   const config = getConfig();
   const markdown = els.markdownOutput.value.trim();
 
+  if (!state.notionToken) {
+    showToast("먼저 Notion으로 로그인해주세요.");
+    return;
+  }
+  if (!state.notionDatabaseId) {
+    showToast("저장할 Notion 데이터베이스를 선택해주세요.");
+    return;
+  }
   if (!markdown || markdown.startsWith("Claude 결과를")) {
     showToast("먼저 Claude 결과를 붙여넣어 Markdown을 생성해주세요.");
     return;
@@ -535,8 +679,12 @@ async function pushToNotion() {
   try {
     const response = await fetch("/api/notion-push", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${state.notionToken}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
+        databaseId: state.notionDatabaseId,
         subject: config.subject,
         scope: config.scope,
         type: config.type,
@@ -546,6 +694,10 @@ async function pushToNotion() {
 
     const data = await response.json();
 
+    if (response.status === 401) {
+      clearNotionToken();
+      throw new Error("Notion 로그인이 만료됐어요. 다시 로그인해주세요.");
+    }
     if (!response.ok) {
       throw new Error(data.error || "Notion 저장 실패");
     }
@@ -553,7 +705,7 @@ async function pushToNotion() {
     showToast("Notion에 저장했어요.");
   } catch (error) {
     console.error(error);
-    showToast("Notion 저장에 실패했어요.");
+    showToast(error.message || "Notion 저장에 실패했어요.");
   } finally {
     els.pushToNotionButton.disabled = false;
     els.pushToNotionButton.textContent = "Notion에 저장";
