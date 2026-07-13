@@ -127,11 +127,26 @@ function markdownToBlocks(markdown) {
         codeLines = [];
       } else {
         inCodeBlock = false;
+        const fullCode = codeLines.join("\n");
+        const richTextChunks = [];
+        
+        // 2000자 단위로 쪼개서 데이터 유실 방지
+        for (let j = 0; j < fullCode.length; j += 2000) {
+          richTextChunks.push({
+            type: "text",
+            text: { content: fullCode.slice(j, j + 2000) }
+          });
+        }
+        
+        if (richTextChunks.length === 0) {
+          richTextChunks.push({ type: "text", text: { content: "" } });
+        }
+
         blocks.push({
           object: "block",
           type: "code",
           code: {
-            rich_text: [{ type: "text", text: { content: codeLines.join("\n").slice(0, 2000) } }],
+            rich_text: richTextChunks.slice(0, 100), // 최대 100조각(20만자) 허용
             language: mapLanguage(codeLanguage),
           },
         });
@@ -144,7 +159,7 @@ function markdownToBlocks(markdown) {
       continue;
     }
 
-    // 표 라인 감지: | 로 시작하고 끝나는 라인
+    // 표 라인 감지
     const isTableRow = /^\s*\|.*\|\s*$/.test(line);
     const isTableSeparator = /^\s*\|?[\s:|-]+\|?\s*$/.test(line) && line.includes("-");
 
@@ -159,7 +174,7 @@ function markdownToBlocks(markdown) {
 
     if (!line.trim()) continue;
 
-    // 독립된 $$...$$ 블록 수식 (한 줄 전체가 수식인 경우)
+    // 독립된 $$...$$ 블록 수식
     const blockMathMatch = line.trim().match(/^\$\$(.+)\$\$$/);
     if (blockMathMatch) {
       blocks.push({
@@ -217,7 +232,6 @@ function markdownToBlocks(markdown) {
   }
 
   flushTable();
-
   return blocks;
 }
 
@@ -226,13 +240,10 @@ function headingBlock(level, text) {
   return {
     object: "block",
     type,
-    [type]: {
-      rich_text: parseInlineRichText(text),
-    },
+    [type]: { rich_text: parseInlineRichText(text) },
   };
 }
 
-// 표 한 행을 셀 배열로 파싱: "| a | b | c |" -> ["a", "b", "c"]
 function parseTableRow(line) {
   const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
   return trimmed.split("|").map((cell) => cell.trim());
@@ -262,14 +273,11 @@ function buildTableBlock(rows) {
   };
 }
 
-// 인라인 텍스트를 Notion rich_text 배열로 변환
-// 처리: **볼드**, *이탤릭*, `코드`, $인라인수식$
+// 인라인 텍스트 처리
 function parseInlineRichText(text) {
   if (!text) return [{ type: "text", text: { content: "" } }];
 
   const segments = [];
-  // 토큰화: $$...$$(굳이 처리 안 해도 되지만 방어), **bold**, `code`, $math$, *italic* 순서로 시도
-  // 볼드(**)를 이탤릭(*)보다 반드시 먼저 검사해야 ** 안의 별표가 * 하나로 잘못 매치되지 않음
   const tokenRegex = /(\*\*[^*]+?\*\*|`[^`]+?`|\$[^$]+?\$|\*[^*]+?\*)/g;
   let lastIndex = 0;
   let match;
@@ -282,13 +290,23 @@ function parseInlineRichText(text) {
     const token = match[0];
 
     if (token.startsWith("**")) {
-      pushAnnotatedText(segments, token.slice(2, -2), { bold: true });
+      const innerText = token.slice(2, -2);
+      // 볼드체 안에 수식이 있는 경우 분기 처리 (예: **$O(n)$**)
+      if (innerText.startsWith("$") && innerText.endsWith("$") && innerText.length > 2) {
+        segments.push({
+          type: "equation",
+          equation: { expression: innerText.slice(1, -1) },
+          annotations: { bold: true }
+        });
+      } else {
+        pushAnnotatedText(segments, innerText, { bold: true });
+      }
     } else if (token.startsWith("`")) {
       pushAnnotatedText(segments, token.slice(1, -1), { code: true });
     } else if (token.startsWith("$")) {
       segments.push({
         type: "equation",
-        equation: { expression: token.slice(1, -1) },
+        equation: { expression: token.slice(1, -1) || " " },
       });
     } else if (token.startsWith("*")) {
       pushAnnotatedText(segments, token.slice(1, -1), { italic: true });
@@ -305,30 +323,31 @@ function parseInlineRichText(text) {
     segments.push({ type: "text", text: { content: "" } });
   }
 
-  // Notion rich_text 배열은 최대 100개, 각 content는 2000자 제한
   return segments.slice(0, 100).map((seg) => {
     if (seg.type === "equation") {
       return {
         type: "equation",
         equation: { expression: seg.equation.expression.slice(0, 1000) },
+        annotations: seg.annotations || undefined
       };
     }
-    return {
-      type: "text",
-      text: { content: seg.text.content.slice(0, 2000) },
-      annotations: seg.annotations,
-    };
+    return seg;
   });
 }
 
+// 텍스트 길이가 2000자가 넘으면 여러 개의 객체로 쪼개서 유실 방지
 function pushPlainText(segments, text) {
   if (!text) return;
-  segments.push({ type: "text", text: { content: text } });
+  for (let i = 0; i < text.length; i += 2000) {
+    segments.push({ type: "text", text: { content: text.slice(i, i + 2000) } });
+  }
 }
 
 function pushAnnotatedText(segments, text, annotations) {
   if (!text) return;
-  segments.push({ type: "text", text: { content: text }, annotations });
+  for (let i = 0; i < text.length; i += 2000) {
+    segments.push({ type: "text", text: { content: text.slice(i, i + 2000) }, annotations });
+  }
 }
 
 function mapLanguage(lang) {
