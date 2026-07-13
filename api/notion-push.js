@@ -83,7 +83,6 @@ export default async function handler(req, res) {
       if (!appendRes.ok) {
         const errText = await appendRes.text();
         console.error("Notion append error", appendRes.status, errText);
-        // 페이지 자체는 이미 생성됐으므로 에러여도 계속 진행
         break;
       }
     }
@@ -97,7 +96,6 @@ export default async function handler(req, res) {
 
 // ---------- Markdown -> Notion blocks ----------
 
-// ✨ 추가된 수식 정제 함수: 에러를 유발하는 가운뎃점을 쉼표로 변환
 function sanitizeMath(expr) {
   if (!expr) return " ";
   return expr.replace(/·/g, ", ");
@@ -125,7 +123,6 @@ function markdownToBlocks(markdown) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // 1. 코드블록 처리
     if (line.trim().startsWith("```")) {
       flushTable();
       if (!inCodeBlock) {
@@ -165,7 +162,6 @@ function markdownToBlocks(markdown) {
       continue;
     }
 
-    // 2. 여러 줄 수식 블록($$) 처리
     if (line.trim() === "$$") {
       flushTable();
       if (!inMathBlock) {
@@ -176,7 +172,7 @@ function markdownToBlocks(markdown) {
         blocks.push({
           object: "block",
           type: "equation",
-          equation: { expression: sanitizeMath(mathLines.join("\n").trim()) }, // sanitizeMath 적용
+          equation: { expression: sanitizeMath(mathLines.join("\n").trim()) },
         });
       }
       continue;
@@ -187,7 +183,6 @@ function markdownToBlocks(markdown) {
       continue;
     }
 
-    // 3. 표 라인 감지
     const isTableRow = /^\s*\|.*\|\s*$/.test(line);
     const isTableSeparator = /^\s*\|?[\s:|-]+\|?\s*$/.test(line) && line.includes("-");
 
@@ -202,19 +197,17 @@ function markdownToBlocks(markdown) {
 
     if (!line.trim()) continue;
 
-    // 4. 독립된 $$...$$ 블록 수식 (한 줄짜리)
     const blockMathMatch = line.trim().match(/^\$\$(.+)\$\$$/);
     if (blockMathMatch) {
       flushTable();
       blocks.push({
         object: "block",
         type: "equation",
-        equation: { expression: sanitizeMath(blockMathMatch[1].trim()) }, // sanitizeMath 적용
+        equation: { expression: sanitizeMath(blockMathMatch[1].trim()) },
       });
       continue;
     }
 
-    // 5. 헤딩, 리스트, 토글 등 기타 요소 처리
     if (line.startsWith("### ")) {
       blocks.push(headingBlock(3, line.slice(4)));
     } else if (line.startsWith("## ")) {
@@ -250,15 +243,18 @@ function markdownToBlocks(markdown) {
       });
     } else if (line.trim() === "---") {
       blocks.push({ object: "block", type: "divider", divider: {} });
+    
+    // ✨ 이 부분을 'toggle'에서 'quote(인용구)'로 수정했습니다.
     } else if (line.trim().startsWith(">")) {
       const text = line.trim().replace(/^>\s*/, "");
       blocks.push({
         object: "block",
         type: "quote",
-        toggle: {
+        quote: {
           rich_text: parseInlineRichText(text),
         },
       });
+
     } else {
       blocks.push({
         object: "block",
@@ -276,7 +272,7 @@ function markdownToBlocks(markdown) {
     blocks.push({
       object: "block",
       type: "equation",
-      equation: { expression: sanitizeMath(mathLines.join("\n").trim()) }, // sanitizeMath 적용
+      equation: { expression: sanitizeMath(mathLines.join("\n").trim()) },
     });
   }
 
@@ -341,7 +337,7 @@ function parseInlineRichText(text) {
       if (innerText.startsWith("$") && innerText.endsWith("$") && innerText.length > 2) {
         segments.push({
           type: "equation",
-          equation: { expression: sanitizeMath(innerText.slice(1, -1)) }, // sanitizeMath 적용
+          equation: { expression: sanitizeMath(innerText.slice(1, -1)) },
           annotations: { bold: true }
         });
       } else {
@@ -352,12 +348,12 @@ function parseInlineRichText(text) {
     } else if (token.startsWith("$$") && token.endsWith("$$")) {
       segments.push({
         type: "equation",
-        equation: { expression: sanitizeMath(token.slice(2, -2).trim()) }, // sanitizeMath 적용
+        equation: { expression: sanitizeMath(token.slice(2, -2).trim()) },
       });
     } else if (token.startsWith("$")) {
       segments.push({
         type: "equation",
-        equation: { expression: sanitizeMath(token.slice(1, -1).trim()) }, // sanitizeMath 적용
+        equation: { expression: sanitizeMath(token.slice(1, -1).trim()) },
       });
     } else if (token.startsWith("*")) {
       pushAnnotatedText(segments, token.slice(1, -1), { italic: true });
