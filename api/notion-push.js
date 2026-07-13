@@ -7,18 +7,16 @@ export default async function handler(req, res) {
     return;
   }
 
-  const token = extractToken(req);
-  if (!token) {
-    res.status(401).json({ error: "Notion 연결이 필요합니다. 먼저 Notion으로 로그인해주세요." });
+  const apiKey = process.env.NOTION_API_KEY;
+  const databaseId = process.env.NOTION_DATABASE_ID;
+
+  if (!apiKey || !databaseId) {
+    res.status(500).json({ error: "Missing Notion environment variables" });
     return;
   }
 
-  const { databaseId, subject, scope, type, markdown } = req.body;
+  const { subject, scope, type, markdown } = req.body;
 
-  if (!databaseId) {
-    res.status(400).json({ error: "저장할 Notion 데이터베이스를 먼저 선택해주세요." });
-    return;
-  }
   if (!subject || !markdown) {
     res.status(400).json({ error: "subject and markdown are required" });
     return;
@@ -28,25 +26,6 @@ export default async function handler(req, res) {
   const today = new Date().toISOString().slice(0, 10);
 
   try {
-    const schemaRes = await fetch(`${NOTION_API_BASE}/databases/${databaseId}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Notion-Version": NOTION_VERSION,
-      },
-    });
-
-    if (!schemaRes.ok) {
-      const errText = await schemaRes.text();
-      console.error("Notion schema fetch failed", schemaRes.status, errText);
-      res.status(schemaRes.status === 401 ? 401 : 502).json({
-        error: "Notion 데이터베이스 정보를 불러오지 못했습니다.",
-      });
-      return;
-    }
-
-    const schema = await schemaRes.json();
-    const properties = buildProperties(schema.properties || {}, { title, subject, type, today });
-
     const blocks = markdownToBlocks(markdown);
 
     // Notion pages.create는 children을 최대 100개까지만 한 번에 받음
@@ -56,13 +35,26 @@ export default async function handler(req, res) {
     const createRes = await fetch(`${NOTION_API_BASE}/pages`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${apiKey}`,
         "Notion-Version": NOTION_VERSION,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
         parent: { database_id: databaseId },
-        properties,
+        properties: {
+          "제목": {
+            title: [{ text: { content: title } }],
+          },
+          "과목": {
+            select: { name: subject },
+          },
+          "날짜": {
+            date: { start: today },
+          },
+          "유형": {
+            select: { name: type || "정리" },
+          },
+        },
         children: firstBatch,
       }),
     });
@@ -70,10 +62,7 @@ export default async function handler(req, res) {
     if (!createRes.ok) {
       const errText = await createRes.text();
       console.error("Notion API error", createRes.status, errText);
-      res.status(createRes.status === 401 ? 401 : 502).json({
-        error: "Notion API request failed",
-        detail: errText,
-      });
+      res.status(502).json({ error: "Notion API request failed", detail: errText });
       return;
     }
 
@@ -85,7 +74,7 @@ export default async function handler(req, res) {
       const appendRes = await fetch(`${NOTION_API_BASE}/blocks/${data.id}/children`, {
         method: "PATCH",
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${apiKey}`,
           "Notion-Version": NOTION_VERSION,
           "Content-Type": "application/json",
         },
@@ -105,49 +94,6 @@ export default async function handler(req, res) {
   }
 }
 
-function extractToken(req) {
-  const header = req.headers.authorization || "";
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  return match ? match[1] : null;
-}
-
-// 사용자가 OAuth로 고른 데이터베이스는 저마다 속성 구성이 다를 수 있으므로,
-// title 속성은 이름과 무관하게 type이 "title"인 속성을 찾아서 채우고,
-// 과목/날짜/유형은 이름에 관련 키워드가 들어간 속성이 "있을 때만" 채운다.
-function buildProperties(schema, { title, subject, type, today }) {
-  const properties = {};
-
-  const titleKey = Object.keys(schema).find((key) => schema[key].type === "title");
-  if (titleKey) {
-    properties[titleKey] = { title: [{ text: { content: title } }] };
-  }
-
-  const subjectKey = findPropertyKey(schema, ["과목", "subject"], "select");
-  if (subjectKey) {
-    properties[subjectKey] = { select: { name: subject } };
-  }
-
-  const dateKey = findPropertyKey(schema, ["날짜", "date"], "date");
-  if (dateKey) {
-    properties[dateKey] = { date: { start: today } };
-  }
-
-  const typeKey = findPropertyKey(schema, ["유형", "타입", "type"], "select");
-  if (typeKey) {
-    properties[typeKey] = { select: { name: type || "정리" } };
-  }
-
-  return properties;
-}
-
-function findPropertyKey(schema, keywords, expectedType) {
-  return Object.keys(schema).find((key) => {
-    if (schema[key].type !== expectedType) return false;
-    const lowerKey = key.toLowerCase();
-    return keywords.some((word) => lowerKey.includes(word.toLowerCase()));
-  });
-}
-
 // ---------- Markdown -> Notion blocks ----------
 
 function sanitizeMath(expr) {
@@ -158,14 +104,14 @@ function sanitizeMath(expr) {
 function markdownToBlocks(markdown) {
   const lines = markdown.split(/\r?\n/);
   const blocks = [];
-
+  
   let inCodeBlock = false;
   let codeLines = [];
   let codeLanguage = "plain text";
 
   let inMathBlock = false;
   let mathLines = [];
-
+  
   let tableBuffer = [];
 
   const flushTable = () => {
@@ -187,14 +133,14 @@ function markdownToBlocks(markdown) {
         inCodeBlock = false;
         const fullCode = codeLines.join("\n");
         const richTextChunks = [];
-
+        
         for (let j = 0; j < fullCode.length; j += 2000) {
           richTextChunks.push({
             type: "text",
-            text: { content: fullCode.slice(j, j + 2000) },
+            text: { content: fullCode.slice(j, j + 2000) }
           });
         }
-
+        
         if (richTextChunks.length === 0) {
           richTextChunks.push({ type: "text", text: { content: "" } });
         }
@@ -297,6 +243,8 @@ function markdownToBlocks(markdown) {
       });
     } else if (line.trim() === "---") {
       blocks.push({ object: "block", type: "divider", divider: {} });
+    
+    // ✨ 이 부분을 'toggle'에서 'quote(인용구)'로 수정했습니다.
     } else if (line.trim().startsWith(">")) {
       const text = line.trim().replace(/^>\s*/, "");
       blocks.push({
@@ -306,6 +254,7 @@ function markdownToBlocks(markdown) {
           rich_text: parseInlineRichText(text),
         },
       });
+
     } else {
       blocks.push({
         object: "block",
@@ -318,7 +267,7 @@ function markdownToBlocks(markdown) {
   }
 
   flushTable();
-
+  
   if (inMathBlock) {
     blocks.push({
       object: "block",
@@ -350,7 +299,9 @@ function buildTableBlock(rows) {
     object: "block",
     type: "table_row",
     table_row: {
-      cells: Array.from({ length: columnCount }, (_, i) => parseInlineRichText(row[i] || "")),
+      cells: Array.from({ length: columnCount }, (_, i) =>
+        parseInlineRichText(row[i] || ""),
+      ),
     },
   }));
 
@@ -387,7 +338,7 @@ function parseInlineRichText(text) {
         segments.push({
           type: "equation",
           equation: { expression: sanitizeMath(innerText.slice(1, -1)) },
-          annotations: { bold: true },
+          annotations: { bold: true }
         });
       } else {
         pushAnnotatedText(segments, innerText, { bold: true });
@@ -424,7 +375,7 @@ function parseInlineRichText(text) {
       return {
         type: "equation",
         equation: { expression: seg.equation.expression.slice(0, 1000) },
-        annotations: seg.annotations || undefined,
+        annotations: seg.annotations || undefined
       };
     }
     return seg;
