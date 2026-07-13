@@ -254,7 +254,7 @@ function markdownToBlocks(markdown) {
       const text = line.trim().replace(/^>\s*/, "");
       blocks.push({
         object: "block",
-        type: "toggle",
+        type: "quote",
         toggle: {
           rich_text: parseInlineRichText(text),
         },
